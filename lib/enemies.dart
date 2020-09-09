@@ -152,6 +152,7 @@ class _EnemyCardState extends State<EnemyCard> {
       if (!widget._animation.loaded()) {
         Future<bool> check() async {
           if (widget._animation.loaded()) {
+            if (this.mounted)
             setState(() {});
           }
           else

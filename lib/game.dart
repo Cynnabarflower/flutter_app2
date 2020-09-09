@@ -38,7 +38,7 @@ class Game extends StatefulWidget {
   Game() : super(key: GlobalKey()) {}
 }
 
-class _GameState extends State<Game> {
+class _GameState extends State<Game> with TickerProviderStateMixin{
   List<GameCell> map;
   List<GameCell> livingBuilding;
   List<GameCell> attractions;
@@ -63,11 +63,21 @@ class _GameState extends State<Game> {
   List<Widget> enemyPositions = [];
   var _coinAnimation;
   bool showSeaDone = true;
+  bool showMoneyReport = false;
+  AnimationController seaAnimationController;
+  Animation<double> seaAnimation;
 
 
   @override
   void initState() {
-
+    seaAnimationController = AnimationController(
+        duration: const Duration(seconds: 2), vsync: this);
+    seaAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(seaAnimationController)
+      ..addListener(() {
+        if (seaAnimationController.isCompleted) {
+          print('completed');
+        }
+      });
     _coinAnimation = flameAnimation.Animation.sequenced('coin.png', 4, textureWidth: 10, textureHeight: 16, stepTime: 1.0);
 /*    _coinAnimation = SpriteSheet(
       imageName: 'coin.png',
@@ -101,9 +111,8 @@ class _GameState extends State<Game> {
     queue = [];
     resetCellPositions();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      setState(() {
-        while (queue.length < 4) generateCard();
-      });
+      queue.add(CellCard(cell: Castle()));
+
       Future.delayed(Duration(seconds: 4), () {
 /*              myBanner
                 ..load()
@@ -139,6 +148,7 @@ class _GameState extends State<Game> {
     var flexMidEnemies = (2.5 / (h + 2.5) * 95).toInt();
 
     var flexBonus = 7;
+    print('animation: ${seaAnimation.value} ${seaAnimationController.value}');
 
     return Scaffold(
       body: SafeArea(
@@ -182,12 +192,10 @@ class _GameState extends State<Game> {
                   Stack(
                     overflow: Overflow.visible,
                       children: [
-                    TweenAnimationBuilder(
-                      duration: Duration(milliseconds: 2000),
-                      tween: Tween(begin: showSeaDone ? 1.0 : 0.0, end: 1.0),
+                    //main game field
+                    LayoutBuilder(
                       key: GlobalKey(),
-                      builder: (context, value, child) {
-
+                      builder: (context, constraints) {
                         var mapHeight = cellWidth * h + cellWidth / 8;
                         var minBottom = cellWidth * 2;
                         var minEnemies = cellWidth * 0.5;
@@ -205,19 +213,21 @@ class _GameState extends State<Game> {
                             child: Container(
                                 height: cellWidth*2,
                                 width: currCellWidth,
-                                child: Image(
-                                    width: currCellWidth,
-                                    height: cellWidth * 2,
-                                    fit: BoxFit.scaleDown,
-                                    image: AssetImage('assets/images/cardSlot.png'))
+                                child: Container(
+                                  color: Colors.black.withOpacity(0.1)
+                                )
                             ),
                           ),
                         );
-                        var enemiesContainer = Padding(
+                        var enemiesContainer =      AnimatedBuilder(
+                          key: GlobalKey(),
+                          animation: seaAnimation,
+                          builder: (context, child) => Padding(
+                          key: GlobalKey(),
                           padding: EdgeInsets.only(
                           left: cellWidth / 4,
                           right: cellWidth / 4,
-                          top: cellWidth / 2 * (showSea ? value : (1 - value)),
+                          top: cellWidth / 2 * (showSea ? seaAnimation.value : (1 - seaAnimation.value)),
                           bottom: cellWidth / 8),
                           child: Align(
                         alignment: Alignment.bottomCenter,
@@ -238,7 +248,7 @@ class _GameState extends State<Game> {
                           ],
                         ),
                           ),
-                        );
+                        ));
                         var bottomContainer = Stack(
                           children: [
                             Container(
@@ -255,15 +265,22 @@ class _GameState extends State<Game> {
                                 alignment: Alignment.topCenter,
                               ),
                             ),
-                            Padding(
-                              padding: EdgeInsets.fromLTRB(cellWidth/4, 12.0, cellWidth/4, (showSea ? value : (1 - value)) * cellWidth * 1.7),
-                              child: Container(
-                                alignment: Alignment.center,
-                                width: MediaQuery.of(context).size.width,
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [EnemyCard(), EnemyCard(), EnemyCard()],
+                            AnimatedBuilder(
+                              key: GlobalKey(),
+                              animation: seaAnimation,
+                              builder: (context, child) => Padding(
+                                padding: EdgeInsets.fromLTRB(cellWidth/4, 12.0, cellWidth/4, (showSea ? seaAnimation.value : (1 - seaAnimation.value)) * cellWidth * 1.7),
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  width: MediaQuery.of(context).size.width,
+                                  child: Visibility(
+                                    visible: showSea,
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [EnemyCard(), EnemyCard(), EnemyCard()],
+                                    ),
+                                  ),
                                 ),
                               ),
                             )
@@ -276,165 +293,173 @@ class _GameState extends State<Game> {
                         children: [
                           //enemies
 //                        AnimatedCrossFade(firstChild: Container(height: cellWidth * 0.5), secondChild: enemiesContainer, crossFadeState: showSea ? CrossFadeState.showFirst : CrossFadeState.showSecond, duration: Duration(milliseconds: 1000))
-                          Flexible(
-                              flex: (( minEnemies + (showSea ? (1 - value) : value) * (screenH - mapHeight - minBottom)) * 100).toInt(),
-                              child: enemiesContainer),
+                          AnimatedBuilder(
+                            key: GlobalKey(),
+                            animation: seaAnimation,
+                        builder: (context, child) => Flexible(
+                                flex: (( minEnemies + (showSea ? (1 - seaAnimation.value) : seaAnimation.value) * (screenH - mapHeight - minBottom)) * 100).toInt(),
+                                child: enemiesContainer),
+                          ),
 //                        Animated
 //                          showSea ? Container(height: cellWidth * 0.4) : enemiesContainer,
                             //map
                           Container(
                             height: mapHeight,
-                            child: Stack(
-                              overflow: Overflow.visible,
-                              children: [
-                                Align(
-                                  alignment: Alignment.center,
-                                  child: Container(
+                            child: Container(
+                              child: Stack(
+                                overflow: Overflow.visible,
+                                children: [
+                                  Align(
                                     alignment: Alignment.center,
-                                    decoration: BoxDecoration(
+                                    child: Container(
+                                      alignment: Alignment.center,
+                                      decoration: BoxDecoration(
 
-                                        borderRadius:
-                                            BorderRadius.all(Radius.circular(10))),
-                                    child: SizedBox(
-                                      width: cellWidth * w,
-                                      height: cellWidth * h,
-                                      child: Stack(
-                                          overflow: Overflow.visible,
-                                          children: [
-                                            Container(
+                                          borderRadius:
+                                              BorderRadius.all(Radius.circular(10))),
+                                      child: SizedBox(
+                                        width: cellWidth * w,
+                                        height: cellWidth * h,
+                                        child: Stack(
+                                            overflow: Overflow.visible,
+                                            children: [
+                                              Container(
 //                                              color: Colors.brown[800],
-                                            )
-                                          ]
-                                            ..addAll(List.generate(
-                                              w * h,
-                                              (i) {
-                                                return Positioned(
-                                                    top: map[i].offset.dy,
-                                                    left: map[i].offset.dx,
-                                                    child: map[i]);
-                                              },
-                                            )..removeWhere((element) =>
-                                                selectedCells.contains(
-                                                    (element as Positioned).child)))
-                                            ..add(Stack(
-                                                children: List.generate(
-                                                    selectedCells.length,
-                                                    (index) =>
-                                                        TweenAnimationBuilder(
-                                                          key: selectedCells[index]
-                                                              .builderKey,
-                                                          duration: Duration(
-                                                              milliseconds: (selectedCells[index]
-                                                                                  .movingTo -
-                                                                              selectedCells[index]
-                                                                                  .offset)
-                                                                          .distance <
-                                                                      cellWidth
-                                                                  ? 100
-                                                                  : 600),
-                                                          tween: Tween<double>(
-                                                              begin: 0, end: 1),
-                                                          builder: (context, value,
-                                                              child) {
-                                                            var c =
-                                                                child as GameCell;
-                                                            return Positioned(
-                                                                top: c.offset.dy +
-                                                                    (c.movingTo.dy -
-                                                                            c.offset
-                                                                                .dy) *
-                                                                        value,
-                                                                left: c.offset.dx +
-                                                                    (c.movingTo.dx -
-                                                                            c.offset
-                                                                                .dx) *
-                                                                        value,
-                                                                child: Container(
-                                                                    decoration:
-                                                                        BoxDecoration(
-                                                                            boxShadow: [
-                                                                          BoxShadow(
-                                                                              offset: c.image != null ? Offset(
-                                                                                  cellWidth /
-                                                                                      40,
-                                                                                  cellWidth /
-                                                                                      40) : Offset(0,0),
-                                                                              color: Colors.black.withOpacity(
-                                                                                  0.4),
-                                                                              blurRadius: c.image != null ? cellWidth / 60 : 0,
-                                                                              spreadRadius: 0)
-                                                                        ]
-                                                                        ),
-                                                                    child: child));
-                                                          },
-                                                          child:
-                                                              selectedCells[index],
-                                                          onEnd: () {
-                                                            selectedCells[index]
-                                                                    .offset =
-                                                                selectedCells[index]
-                                                                    .movingTo;
-                                                          },
-                                                        ))
-                                                  ..sort((a, b) {
-                                                    var d = ((a as TweenAnimationBuilder)
-                                                                .child as GameCell)
-                                                            .offset -
-                                                        ((b as TweenAnimationBuilder)
-                                                                .child as GameCell)
-                                                            .offset;
-                                                    var r =
-                                                        d.dy.abs() > cellWidth / 2
-                                                            ? d.dy
-                                                            : d.dx;
-                                                    return r.floor();
-                                                  })))
-                                            ..add(
-                                                //enemy stack
-                                                Stack(
-                                              children: enemies,
-                                            ))
+                                              )
+                                            ]
+                                              ..addAll(List.generate(
+                                                w * h,
+                                                (i) {
+                                                  return Positioned(
+                                                      top: map[i].offset.dy,
+                                                      left: map[i].offset.dx,
+                                                      child: map[i]);
+                                                },
+                                              )..removeWhere((element) =>
+                                                  selectedCells.contains(
+                                                      (element as Positioned).child)))
+                                              ..add(Stack(
+                                                  children: List.generate(
+                                                      selectedCells.length,
+                                                      (index) =>
+                                                          TweenAnimationBuilder(
+                                                            key: selectedCells[index]
+                                                                .builderKey,
+                                                            duration: Duration(
+                                                                milliseconds: (selectedCells[index]
+                                                                                    .movingTo -
+                                                                                selectedCells[index]
+                                                                                    .offset)
+                                                                            .distance <
+                                                                        cellWidth
+                                                                    ? 100
+                                                                    : 600),
+                                                            tween: Tween<double>(
+                                                                begin: 0, end: 1),
+                                                            builder: (context, value,
+                                                                child) {
+                                                              var c =
+                                                                  child as GameCell;
+                                                              return Positioned(
+                                                                  top: c.offset.dy +
+                                                                      (c.movingTo.dy -
+                                                                              c.offset
+                                                                                  .dy) *
+                                                                          value,
+                                                                  left: c.offset.dx +
+                                                                      (c.movingTo.dx -
+                                                                              c.offset
+                                                                                  .dx) *
+                                                                          value,
+                                                                  child: Container(
+                                                                      decoration:
+                                                                          BoxDecoration(
+                                                                              boxShadow: [
+                                                                            BoxShadow(
+                                                                                offset: c.image != null ? Offset(
+                                                                                    cellWidth /
+                                                                                        40,
+                                                                                    cellWidth /
+                                                                                        40) : Offset(0,0),
+                                                                                color: Colors.black.withOpacity(
+                                                                                    0.4),
+                                                                                blurRadius: c.image != null ? cellWidth / 60 : 0,
+                                                                                spreadRadius: 0)
+                                                                          ]
+                                                                          ),
+                                                                      child: child));
+                                                            },
+                                                            child:
+                                                                selectedCells[index],
+                                                            onEnd: () {
+                                                              selectedCells[index]
+                                                                      .offset =
+                                                                  selectedCells[index]
+                                                                      .movingTo;
+                                                            },
+                                                          ))
+                                                    ..sort((a, b) {
+                                                      var d = ((a as TweenAnimationBuilder)
+                                                                  .child as GameCell)
+                                                              .offset -
+                                                          ((b as TweenAnimationBuilder)
+                                                                  .child as GameCell)
+                                                              .offset;
+                                                      var r =
+                                                          d.dy.abs() > cellWidth / 2
+                                                              ? d.dy
+                                                              : d.dx;
+                                                      return r.floor();
+                                                    })))
+                                              ..add(
+                                                  //enemy stack
+                                                  Stack(
+                                                children: enemies,
+                                              ))
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                                Visibility(
-                                  visible: dragItem is EventCard,
-                                  child: Align(
-                                    alignment: Alignment.center,
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: DragTarget(
-                                          onAccept: (data) {
-                                        game.chooserKey.currentState.remove(data);
-                                        data.activate();
-                                      }, builder:
-                                          (context, candidateData, rejectedData) {
-                                        return Container(
-                                          width: cellWidth * 5.25,
-                                          decoration: BoxDecoration(
-                                              color: Colors.white.withOpacity(0.4),
-                                              borderRadius: BorderRadius.all(
-                                                  Radius.circular(16))),
-                                        );
-                                      }),
+                                  Visibility(
+                                    visible: dragItem is EventCard,
+                                    child: Align(
+                                      alignment: Alignment.center,
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: DragTarget(
+                                            onAccept: (data) {
+                                          game.chooserKey.currentState.remove(data);
+                                          data.activate();
+                                        }, builder:
+                                            (context, candidateData, rejectedData) {
+                                          return Container(
+                                            width: cellWidth * 5.25,
+                                            decoration: BoxDecoration(
+                                                color: Colors.white.withOpacity(0.4),
+                                                borderRadius: BorderRadius.all(
+                                                    Radius.circular(16))),
+                                          );
+                                        }),
+                                      ),
                                     ),
-                                  ),
-                                )
-                              ],
+                                  )
+                                ],
+                              ),
                             ),
                           ),
                           //card chooser
-                          Flexible(
-                              flex: ((minBottom + (showSea ? value : (1 - value)) * (screenH - mapHeight - minEnemies)) * 100).toInt(),
-                              child: bottomContainer),
+                          AnimatedBuilder(
+                            key: GlobalKey(),
+                            animation: seaAnimation,
+                            builder: (context, child) =>  Flexible(
+                                flex: ((minBottom + (showSea ? seaAnimation.value : (1 - seaAnimation.value)) * (screenH - mapHeight - minEnemies)) * 100).toInt(),
+                                child: bottomContainer),
+                          ),
                         ],
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       );},
-                      onEnd: () {
-                        showSeaDone = true;
-                      },
                     ),
+                    // bonuses and money
                     Padding(
                       padding: const EdgeInsets.only(left: 8.0, top: 2),
                       child: Row(
@@ -487,35 +512,42 @@ class _GameState extends State<Game> {
                                     FittedBox(
                                       fit: BoxFit.scaleDown,
                                       child: Container(
-                                        child: Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            !_coinAnimation.loaded() ?
-                                            Icon(
-                                              Icons.monetization_on,
-                                              size: cellWidth / 3,
-                                            ) : Container(
-                                              width: cellWidth/3 * 10/16,
-                                              height: cellWidth/3,
-                                              child: AnimationWidget(
-                                                animation: _coinAnimation,
-                                              ),
-                                            ),
-                                            FittedBox(
-                                              fit: BoxFit.scaleDown,
-                                              child: Padding(
-                                                padding: EdgeInsets.only(
-                                                    left: cellWidth / 10,
-                                                    right: cellWidth / 20),
-                                                child: Text(
-                                                  money.toString(),
-                                                  style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: cellWidth / 3),
+                                        child: GestureDetector(
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              !_coinAnimation.loaded() ?
+                                              Icon(
+                                                Icons.monetization_on,
+                                                size: cellWidth / 3,
+                                              ) : Container(
+                                                width: cellWidth/3 * 10/16,
+                                                height: cellWidth/3,
+                                                child: AnimationWidget(
+                                                  animation: _coinAnimation,
                                                 ),
                                               ),
-                                            )
-                                          ],
+                                              FittedBox(
+                                                fit: BoxFit.scaleDown,
+                                                child: Padding(
+                                                  padding: EdgeInsets.only(
+                                                      left: cellWidth / 10,
+                                                      right: cellWidth / 20),
+                                                  child: Text(
+                                                    money.toString(),
+                                                    style: TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: cellWidth / 3),
+                                                  ),
+                                                ),
+                                              )
+                                            ],
+                                          ),
+                                          onTap: () {
+                                            setState(() {
+                                              showMoneyReport = !showMoneyReport;
+                                            });
+                                          },
                                         ),
                                       ),
                                     ),
@@ -552,13 +584,20 @@ class _GameState extends State<Game> {
     super.setState(fn);
   }
 
+  void setSea({show}) {
+    showSea = show ?? !showSea;
+    showSeaDone = false;
+    if (showSea)
+      seaAnimationController.forward();
+    else
+      seaAnimationController.reverse();
+  }
+
   void step() async {
     print('step');
-
-    showSea = !showSea;
-    showSeaDone = false;
-
      game.happiness = 50.0;
+
+     setSea();
 
     map.forEach((e) {
       e.fill = 0;
@@ -577,7 +616,9 @@ class _GameState extends State<Game> {
     });
 
     game.chooserKey.currentState.step();
-    generateCard();
+    setState(() {
+      while (queue.length < 4) generateCard();
+    });
     game.chooserKey.currentState.setAvailable(true);
     chooserKey.currentState.update();
     selectedCells.clear();
@@ -815,6 +856,10 @@ class GameCell extends StatefulWidget {
     return Offset(cellWidth * j, cellWidth * i);
   }
 
+  Widget informationData() {
+    return Container();
+  }
+
   void upgrade() {
     if (levels.isNotEmpty) {
       if (levels[level].steps > 0) {
@@ -1023,7 +1068,7 @@ class _GameCellState extends State<GameCell> {
     );
   }
 
-  Widget information() {
+  Widget information1() {
     return StatefulBuilder(
       builder: (context, setState) => AlertDialog(
         backgroundColor: Colors.lightBlue,
@@ -1065,6 +1110,89 @@ class _GameCellState extends State<GameCell> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
+  }
+
+
+  @override
+  Widget information() {
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          contentPadding: EdgeInsets.only(top: 8),
+          content: LimitedBox(
+            maxWidth: MediaQuery.of(context).size.width / 1.5,
+            child: Material(
+              elevation: 20,
+              color: Colors.transparent,
+              child: ClipRRect(
+                borderRadius: BorderRadius.all(Radius.circular(16)),
+                child: Container(
+                  color: Colors.greenAccent[400],
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Column(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AspectRatio(
+                                aspectRatio: 1,
+                                child: ClipRRect(
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Align(
+                                    alignment: Alignment.center,
+                                    child: LimitedBox(
+                                        maxHeight: 300,
+                                        maxWidth: 300,
+                                        child: widget.informationData()),
+                                  ),
+                                ),
+                              ),
+                              AspectRatio(
+                                aspectRatio: 1 / 0.5,
+                                child: ClipRRect(
+                                  clipBehavior: Clip.antiAlias,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 12.0),
+                                    child: InkWell(
+                                      onTap: () {
+                                        Navigator.of(context,
+                                            rootNavigator: true)
+                                            .pop();
+                                      },
+                                      child: Container(
+                                          padding: EdgeInsets.only(
+                                              top: 32.0, bottom: 32.0),
+                                          decoration: BoxDecoration(
+                                            color: Colors.greenAccent[700],
+                                            borderRadius: BorderRadius.only(
+                                                bottomLeft:
+                                                Radius.circular(16.0),
+                                                bottomRight:
+                                                Radius.circular(16.0)),
+                                          ),
+//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
+                                          child: Icon(Icons.check_circle)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ]),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
   }
 }
 
@@ -1592,6 +1720,7 @@ class CellCard extends GameCard {
         );
       },
     );
+
   }
 
   @override
