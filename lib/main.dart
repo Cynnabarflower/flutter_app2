@@ -10,7 +10,10 @@ void main() async {
   await Flame.images.load('Goblin/Idle.png');
 //  await Flame.images.load('water1.png');
   await Flame.images.load('coin.png');
-  runApp(App());
+   runApp(App());
+  // runApp(GameWidget(
+  //   game: MyGame()
+//  ));
   SystemChrome.setEnabledSystemUIOverlays(SystemUiOverlay.values);
 }
 
@@ -22,7 +25,6 @@ class App extends StatefulWidget {
 }
 
 class _AppState extends State<App> {
-
 
 
   @override
@@ -38,7 +40,7 @@ class _AppState extends State<App> {
   @override
   void initState() {
     super.initState();
-    FirebaseAdMob.instance.initialize(appId: 'ca-app-pub-8562826557471441~7861153543');
+    // FirebaseAdMob.instance.initialize(appId: 'ca-app-pub-8562826557471441~7861153543');
   }
 }
 

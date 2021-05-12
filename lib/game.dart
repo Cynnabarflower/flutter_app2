@@ -1,33 +1,35 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui';
 
-import 'package:firebase_admob/firebase_admob.dart';
 import 'package:flame/widgets/animation_widget.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_app2/cards.dart';
+import 'package:flutter_app2/battle_ai.dart';
+import 'package:flutter_app2/battlefield.dart';
+import 'package:flutter_app2/creatureCells.dart';
 import 'package:flutter_app2/enemies.dart';
 import 'package:flame/animation.dart' as flameAnimation;
+import 'package:flutter_app2/gamefield.dart';
+import 'package:flutter_app2/town.dart';
 
+import 'ads.dart';
 import 'cells.dart';
+import 'topLayer.dart';
+
 
 const GREEN = Color.fromARGB(255, 0, 176, 80);
 var cellWidth = 0.0;
-var gameConstrains;
+double GAME_WIDTH = 512;
+double GAME_HEIGHT = 512 * 16 / 9;
+double ASPECT_RATIO = 5/7;
 var loadComplete = false;
 _GameState game;
-BannerAd myBanner;
-InterstitialAd myInterstitial;
-MobileAdTargetingInfo targetingInfo = MobileAdTargetingInfo(
-  keywords: <String>['flutterio', 'beautiful apps'],
-  contentUrl: 'https://flutter.io',
-  childDirected: false,
-  testDevices: <String>[], // Android emulators are considered test devices
-);
+Ads ads;
+int viewNumber = 0; //0 - top, 1 - build, 2 - sea
 
 class Game extends StatefulWidget {
-
   @override
   State createState() {
     game = _GameState();
@@ -36,540 +38,387 @@ class Game extends StatefulWidget {
   }
 
   Game() : super(key: GlobalKey()) {}
+
+  Game.load() : super(key: GlobalKey()) {
+
+  }
 }
 
-class _GameState extends State<Game> with TickerProviderStateMixin{
-  List<GameCell> map;
-  List<GameCell> livingBuilding;
-  List<GameCell> attractions;
+class _GameState extends State<Game> with TickerProviderStateMixin {
+
   bool showSea = false;
-  var h = 5;
-  var w = 5;
-  List<GameCard> queue;
-  var top = 0.0;
-  var left = 0.0;
-  var movingSpeed = 1.0;
-  int money = 6000;
-  int people = 0;
-  var happiness = 50.0;
   GlobalKey<_ChooserState> chooserKey = GlobalKey();
-  var dragItem;
-  List<GameCell> selectedCells = [];
-  bool selecting = false;
+  int money = 6000;
+  var happiness = 50.0;
   List<GameCard> bonuses = [];
   GlobalKey<AnimatedListState> bonusListKey = GlobalKey();
-  List<EnemyCard> enemies = [];
+  List<EnemyCard> topEnemies = [EnemyCard(), EnemyCard(), EnemyCard()];
+  List<EnemyCard> bottomEnemies = [EnemyCard(), EnemyCard(), EnemyCard()];
   Widget enemyPositionTemplate;
-  List<Widget> enemyPositions = [];
   var _coinAnimation;
-  bool showSeaDone = true;
   bool showMoneyReport = false;
-  AnimationController seaAnimationController;
-  Animation<double> seaAnimation;
+  // AnimationController seaAnimationController;
+  // Animation<double> seaAnimation;
+  bool longDisplay = false;
+  ScrollController _mainScrollController = ScrollController();
+  Size _deviceSize;
 
+  bool selecting = false;
+  Town town;
+  Battlefield battlefield;
+  BattleAI battleAI;
+  int attackCountdown = -1;
+
+  double arrowTop = 10;
+  double arrowLeft = 10;
+  List<Widget> flyingObjects = [];
+  TopLayer topLayer;
+
+  bool waitingForStep = false;
 
   @override
   void initState() {
-    seaAnimationController = AnimationController(
-        duration: const Duration(seconds: 2), vsync: this);
-    seaAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(seaAnimationController)
-      ..addListener(() {
-        if (seaAnimationController.isCompleted) {
-          print('completed');
-        }
-      });
-    _coinAnimation = flameAnimation.Animation.sequenced('coin.png', 4, textureWidth: 10, textureHeight: 16, stepTime: 1.0);
-/*    _coinAnimation = SpriteSheet(
-      imageName: 'coin.png',
-      columns: 4,
-      rows: 1,
-      textureWidth: 16,
-      textureHeight: 16,
-    ).createAnimation(0, stepTime: 0.25);*/
+    // for (int i = 0; i < 3; i++) {
+    //   topEnemies[i].index = i;
+    //   bottomEnemies[i].index = i;
+    // }
+
+    town = Town();
+    battlefield = Battlefield();
+    battleAI = BattleAI(battlefield, 1);
+    topLayer = TopLayer();
+
+   /* seaAnimationController =
+        AnimationController(duration: const Duration(seconds: 2), vsync: this);
+    seaAnimation =
+        Tween<double>(begin: 0.0, end: 1.0).animate(seaAnimationController)
+          ..addListener(() {
+            if (seaAnimationController.isCompleted) {
+            } else if (seaAnimationController.isDismissed) {}
+          });*/
+    _coinAnimation = flameAnimation.Animation.sequenced('coin.png', 4,
+        textureWidth: 10, textureHeight: 16, stepTime: 1.0);
 
     SystemChrome.setEnabledSystemUIOverlays([]);
 
-    myInterstitial = InterstitialAd(
-      // Replace the testAdUnitId with an ad unit id from the AdMob dash.
-      // https://developers.google.com/admob/android/test-ads
-      // https://developers.google.com/admob/ios/test-ads
-      adUnitId: InterstitialAd.testAdUnitId,
-      targetingInfo: targetingInfo,
-      listener: (MobileAdEvent event) {
-        print("InterstitialAd event is $event");
-      },
-    );
+    ads = Ads();
+
 
     super.initState();
 
-    gameConstrains = null;
 
-    map = List<GameCell>(w * h);
-    for (var i = 0; i < w * h; i++) {
-      map[i] = GameCell(i: (i / w).floor(), j: i - ((i / w).floor() * w));
-    }
-    queue = [];
-    resetCellPositions();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      queue.add(CellCard(cell: Castle()));
-
-      Future.delayed(Duration(seconds: 4), () {
-/*              myBanner
-                ..load()
-                ..show(
-                  anchorOffset: 0.0,
-                  horizontalCenterOffset: 0.0,
-                  anchorType: AnchorType.bottom,
-                );*/
-
-/*              myInterstitial
-                ..load()
-                ..show(
-                  anchorType: AnchorType.bottom,
-                  anchorOffset: 0.0,
-                  horizontalCenterOffset: 0.0,
-                );*/
-      });
+      /*  Future.delayed(Duration(seconds: 4), () {
+        ads.showBanner();
+      });*/
     });
+    // changeView(i: 1);
   }
 
-  void resetCellPositions() {
-    for (var i = 0; i < map.length; i++) {
-      map[i].resetOffset();
-      if ((map[i].key as GlobalKey).currentState != null)
-        (map[i].key as GlobalKey).currentState.setState(() {});
-    }
+
+  @override
+  Widget information(Widget informationData, {tag = 0}) {
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return AlertDialog(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          contentPadding: EdgeInsets.only(top: 8),
+          content: Hero(
+            tag: tag,
+            child: SizedBox(
+              width: MediaQuery.of(context).size.width / 1.5,
+              height: MediaQuery.of(context).size.width / 1.5 * 1.5,
+              child: Material(
+                elevation: 20,
+                color: Colors.transparent,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.all(Radius.circular(16)),
+                  child: Container(
+                    color: Colors.greenAccent[400],
+                    child: Column(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: ClipRRect(
+                              clipBehavior: Clip.antiAlias,
+                              child: Align(
+                                alignment: Alignment.center,
+                                child: informationData,
+                              ),
+                            ),
+                          ),
+                          AspectRatio(
+                            aspectRatio: 4 / 1,
+                            child: ClipRRect(
+                              clipBehavior: Clip.antiAlias,
+                              child: Container(
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.of(context,
+                                        rootNavigator: true)
+                                        .pop();
+                                  },
+                                  child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.greenAccent[700],
+                                        borderRadius: BorderRadius.only(
+                                            bottomLeft:
+                                            Radius.circular(16.0),
+                                            bottomRight:
+                                            Radius.circular(16.0)),
+                                      ),
+//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
+                                      child: Icon(Icons.check_circle, color: Colors.white54,)),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ]),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
   }
 
   Widget build(BuildContext context) {
-    var flexTop = 5;
-//    var flexBot = (1.5 / (h + 1.5 + 2.5) * 95).toInt();
-    var flexMid = (h / (h + 2.5) * 95).toInt();
-    var flexMidEnemies = (2.5 / (h + 2.5) * 95).toInt();
 
-    var flexBonus = 7;
-    print('animation: ${seaAnimation.value} ${seaAnimationController.value}');
+    (town.key as GlobalKey).currentState?.setState(() {});
+
+    if (_deviceSize != MediaQuery.of(context).size && _mainScrollController.positions.isNotEmpty) {
+      _deviceSize = MediaQuery.of(context).size;
+
+      changeView(i: viewNumber, animate: false);
+    }
+
+    Widget chooser;
+    if (town.cellSide != null) {
+      print('new chooser $viewNumber');
+      cellWidth = town.cellSide;
+      chooser = Padding(
+          padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+          child: Align(
+              alignment: Alignment.bottomCenter,
+              child: Chooser(
+                  viewNumber == 0 ? battlefield : town, key: chooserKey)));
+    } else {
+      Future.delayed(Duration(milliseconds: 500), () => setState((){}));
+    }
 
     return Scaffold(
       body: SafeArea(
-        child: Stack(
-          children: [
-            LayoutBuilder(builder: (context, constrains) {
-              if (gameConstrains != constrains) {
-                gameConstrains = constrains;
-                cellWidth = min(constrains.maxWidth / (w * 1.1),
-                constrains.maxHeight * flexMid / 100 / (h + 0.1));
-                resetCellPositions();
-                movingSpeed = cellWidth / 1000;
-                loadComplete = true;
-              } else {
-                loadComplete = true;
-              }
+        child: LayoutBuilder(
+            builder: (context, constraints) {
+              print(constraints.maxHeight/constraints.maxWidth);
 
-              var screenH = MediaQuery.of(context).size.height;
-              var chooser = Visibility(
-                visible: true,
-                child: Padding(
-                    padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-                    child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Chooser(key: chooserKey))),
-              );
-
-              return Stack(
-                children: [
-                  Container(
-                    alignment: Alignment.topCenter,
-                    child: Image(
-                      image: AssetImage('assets/images/grassBig2.png'),
-                      fit: BoxFit.fill,
-                      width: MediaQuery.of(context).size.width,
-                      height: screenH,
-                      alignment: Alignment.center,
-                      repeat: ImageRepeat.repeat,
-                    ),
-                  ),
-                  Stack(
-                    overflow: Overflow.visible,
-                      children: [
-                    //main game field
-                    LayoutBuilder(
-                      key: GlobalKey(),
-                      builder: (context, constraints) {
-                        var mapHeight = cellWidth * h + cellWidth / 8;
-                        var minBottom = cellWidth * 2;
-                        var minEnemies = cellWidth * 0.5;
-                        print((screenH - mapHeight)/cellWidth);
-                        if (screenH - mapHeight > 6 * cellWidth) {
-                          mapHeight += cellWidth;
-                        }
-
-                        var currCellWidth = cellWidth * (game.w - 0.5) / 3;
-                        enemyPositionTemplate = SizedBox(
-                          width: currCellWidth,
-                          height: currCellWidth * 1.4,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.all(Radius.circular(currCellWidth/11)),
-                            child: Container(
-                                height: cellWidth*2,
-                                width: currCellWidth,
-                                child: Container(
-                                  color: Colors.black.withOpacity(0.1)
-                                )
-                            ),
-                          ),
-                        );
-                        var enemiesContainer =      AnimatedBuilder(
-                          key: GlobalKey(),
-                          animation: seaAnimation,
-                          builder: (context, child) => Padding(
-                          key: GlobalKey(),
-                          padding: EdgeInsets.only(
-                          left: cellWidth / 4,
-                          right: cellWidth / 4,
-                          top: cellWidth / 2 * (showSea ? seaAnimation.value : (1 - seaAnimation.value)),
-                          bottom: cellWidth / 8),
-                          child: Align(
-                        alignment: Alignment.bottomCenter,
+                //background
+                return Stack(
+                  children: [
+                    SingleChildScrollView(
+                      controller: _mainScrollController,
+                      physics: NeverScrollableScrollPhysics(),
+                      child: AbsorbPointer(
+                        absorbing: waitingForStep,
                         child: Stack(
+                          alignment: Alignment.topCenter,
+                          //loading game stack
                           children: [
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: List.generate(3, (index) => enemyPositionTemplate.createElement().widget),
-                            ),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [EnemyCard(),
-                                EnemyCard(),
-                                EnemyCard()],
-                            ),
-                          ],
-                        ),
-                          ),
-                        ));
-                        var bottomContainer = Stack(
-                          children: [
+                          /*  Image(
+                              image: AssetImage('assets/images/grassBig9.png'),
+                              fit: BoxFit.cover,
+                              height: constraints.maxHeight * 20/7,
+                              // repeat: ImageRepeat.repeat,
+                            ),*/
+
                             Container(
-                              alignment: Alignment.center,
-                              color: Colors.blue[800],
-                            ),
-                            Positioned(
-                              top: -7,
-                              child: Image(
-                                height: 48,
-                                image: AssetImage('assets/images/watertop.png'),
-                                repeat: ImageRepeat.repeatX,
-                                width: cellWidth * 6,
-                                alignment: Alignment.topCenter,
-                              ),
-                            ),
-                            AnimatedBuilder(
-                              key: GlobalKey(),
-                              animation: seaAnimation,
-                              builder: (context, child) => Padding(
-                                padding: EdgeInsets.fromLTRB(cellWidth/4, 12.0, cellWidth/4, (showSea ? seaAnimation.value : (1 - seaAnimation.value)) * cellWidth * 1.7),
-                                child: Container(
-                                  alignment: Alignment.center,
-                                  width: MediaQuery.of(context).size.width,
-                                  child: Visibility(
-                                    visible: showSea,
-                                    child: Row(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [EnemyCard(), EnemyCard(), EnemyCard()],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            )
-
-                          ],
-                          overflow: Overflow.visible,
-                        );
-
-                        return Column(
-                        children: [
-                          //enemies
-//                        AnimatedCrossFade(firstChild: Container(height: cellWidth * 0.5), secondChild: enemiesContainer, crossFadeState: showSea ? CrossFadeState.showFirst : CrossFadeState.showSecond, duration: Duration(milliseconds: 1000))
-                          AnimatedBuilder(
-                            key: GlobalKey(),
-                            animation: seaAnimation,
-                        builder: (context, child) => Flexible(
-                                flex: (( minEnemies + (showSea ? (1 - seaAnimation.value) : seaAnimation.value) * (screenH - mapHeight - minBottom)) * 100).toInt(),
-                                child: enemiesContainer),
-                          ),
-//                        Animated
-//                          showSea ? Container(height: cellWidth * 0.4) : enemiesContainer,
-                            //map
-                          Container(
-                            height: mapHeight,
-                            child: Container(
-                              child: Stack(
-                                overflow: Overflow.visible,
+                              // height: constraints.maxHeight * 20/7,
+                              child: Column(
                                 children: [
-                                  Align(
-                                    alignment: Alignment.center,
+                                  AspectRatio(
+                                    aspectRatio: 5/7,
                                     child: Container(
-                                      alignment: Alignment.center,
                                       decoration: BoxDecoration(
-
-                                          borderRadius:
-                                              BorderRadius.all(Radius.circular(10))),
-                                      child: SizedBox(
-                                        width: cellWidth * w,
-                                        height: cellWidth * h,
-                                        child: Stack(
-                                            overflow: Overflow.visible,
-                                            children: [
-                                              Container(
-//                                              color: Colors.brown[800],
-                                              )
-                                            ]
-                                              ..addAll(List.generate(
-                                                w * h,
-                                                (i) {
-                                                  return Positioned(
-                                                      top: map[i].offset.dy,
-                                                      left: map[i].offset.dx,
-                                                      child: map[i]);
-                                                },
-                                              )..removeWhere((element) =>
-                                                  selectedCells.contains(
-                                                      (element as Positioned).child)))
-                                              ..add(Stack(
-                                                  children: List.generate(
-                                                      selectedCells.length,
-                                                      (index) =>
-                                                          TweenAnimationBuilder(
-                                                            key: selectedCells[index]
-                                                                .builderKey,
-                                                            duration: Duration(
-                                                                milliseconds: (selectedCells[index]
-                                                                                    .movingTo -
-                                                                                selectedCells[index]
-                                                                                    .offset)
-                                                                            .distance <
-                                                                        cellWidth
-                                                                    ? 100
-                                                                    : 600),
-                                                            tween: Tween<double>(
-                                                                begin: 0, end: 1),
-                                                            builder: (context, value,
-                                                                child) {
-                                                              var c =
-                                                                  child as GameCell;
-                                                              return Positioned(
-                                                                  top: c.offset.dy +
-                                                                      (c.movingTo.dy -
-                                                                              c.offset
-                                                                                  .dy) *
-                                                                          value,
-                                                                  left: c.offset.dx +
-                                                                      (c.movingTo.dx -
-                                                                              c.offset
-                                                                                  .dx) *
-                                                                          value,
-                                                                  child: Container(
-                                                                      decoration:
-                                                                          BoxDecoration(
-                                                                              boxShadow: [
-                                                                            BoxShadow(
-                                                                                offset: c.image != null ? Offset(
-                                                                                    cellWidth /
-                                                                                        40,
-                                                                                    cellWidth /
-                                                                                        40) : Offset(0,0),
-                                                                                color: Colors.black.withOpacity(
-                                                                                    0.4),
-                                                                                blurRadius: c.image != null ? cellWidth / 60 : 0,
-                                                                                spreadRadius: 0)
-                                                                          ]
-                                                                          ),
-                                                                      child: child));
-                                                            },
-                                                            child:
-                                                                selectedCells[index],
-                                                            onEnd: () {
-                                                              selectedCells[index]
-                                                                      .offset =
-                                                                  selectedCells[index]
-                                                                      .movingTo;
-                                                            },
-                                                          ))
-                                                    ..sort((a, b) {
-                                                      var d = ((a as TweenAnimationBuilder)
-                                                                  .child as GameCell)
-                                                              .offset -
-                                                          ((b as TweenAnimationBuilder)
-                                                                  .child as GameCell)
-                                                              .offset;
-                                                      var r =
-                                                          d.dy.abs() > cellWidth / 2
-                                                              ? d.dy
-                                                              : d.dx;
-                                                      return r.floor();
-                                                    })))
-                                              ..add(
-                                                  //enemy stack
-                                                  Stack(
-                                                children: enemies,
-                                              ))
-                                        ),
+                                          image: DecorationImage(
+                                              image: AssetImage('assets/images/grassTop.png'),
+                                              fit: BoxFit.fill
+                                          )
                                       ),
+                                      alignment: Alignment.center,
+                                      child: battlefield,
                                     ),
                                   ),
-                                  Visibility(
-                                    visible: dragItem is EventCard,
-                                    child: Align(
-                                      alignment: Alignment.center,
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: DragTarget(
-                                            onAccept: (data) {
-                                          game.chooserKey.currentState.remove(data);
-                                          data.activate();
-                                        }, builder:
-                                            (context, candidateData, rejectedData) {
-                                          return Container(
-                                            width: cellWidth * 5.25,
-                                            decoration: BoxDecoration(
-                                                color: Colors.white.withOpacity(0.4),
-                                                borderRadius: BorderRadius.all(
-                                                    Radius.circular(16))),
-                                          );
-                                        }),
-                                      ),
+                                  AspectRatio(
+                                    aspectRatio: 5/7,
+                                    child: town
+                                  ),
+                                  AspectRatio(
+                                    aspectRatio: 5/7,
+                                    child: Container(
+                                        decoration: BoxDecoration(
+                                            image: DecorationImage(
+                                                image: AssetImage('assets/images/water.png'),
+                                                fit: BoxFit.fill
+                                            )
+                                        ),
+                                        alignment: Alignment.center,
                                     ),
                                   )
                                 ],
                               ),
                             ),
-                          ),
-                          //card chooser
-                          AnimatedBuilder(
-                            key: GlobalKey(),
-                            animation: seaAnimation,
-                            builder: (context, child) =>  Flexible(
-                                flex: ((minBottom + (showSea ? seaAnimation.value : (1 - seaAnimation.value)) * (screenH - mapHeight - minEnemies)) * 100).toInt(),
-                                child: bottomContainer),
-                          ),
-                        ],
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      );},
-                    ),
-                    // bonuses and money
-                    Padding(
-                      padding: const EdgeInsets.only(left: 8.0, top: 2),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Flexible(
-                            flex: 70,
-                            child: Padding(
-                              padding: EdgeInsets.only(right: cellWidth / 5),
-                              child: Column(children: [
-                                Flexible(
-                                  flex: flexBonus,
-                                  child: Container(
-                                    alignment: Alignment.topLeft,
-                                    child: AnimatedList(
-                                      key: bonusListKey,
-                                      itemBuilder: (context, index, animation) =>
-                                          LimitedBox(
-                                        maxWidth: cellWidth * 0.8,
-                                        child: Padding(
-                                          padding:
-                                              EdgeInsets.symmetric(horizontal: 4),
-                                          child: bonuses[index],
-                                        ),
-                                      ),
-                                      initialItemCount: bonuses.length,
-                                      scrollDirection: Axis.horizontal,
-                                      shrinkWrap: true,
-                                    ),
-                                  ),
-                                ),
-                                Flexible(
-                                  flex: 100 - flexBonus,
-                                  child: Container(),
-                                )
-                              ]),
-                            ),
-                          ),
-                          Flexible(
-                            flex: 30,
-                            child: Container(
-                              padding: EdgeInsets.only(top: 4, right: 4),
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                    horizontal: cellWidth / 10),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.start,
-                                  children: [
-                                    FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Container(
-                                        child: GestureDetector(
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              !_coinAnimation.loaded() ?
-                                              Icon(
-                                                Icons.monetization_on,
-                                                size: cellWidth / 3,
-                                              ) : Container(
-                                                width: cellWidth/3 * 10/16,
-                                                height: cellWidth/3,
-                                                child: AnimationWidget(
-                                                  animation: _coinAnimation,
-                                                ),
-                                              ),
-                                              FittedBox(
-                                                fit: BoxFit.scaleDown,
-                                                child: Padding(
-                                                  padding: EdgeInsets.only(
-                                                      left: cellWidth / 10,
-                                                      right: cellWidth / 20),
-                                                  child: Text(
-                                                    money.toString(),
-                                                    style: TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: cellWidth / 3),
-                                                  ),
-                                                ),
-                                              )
-                                            ],
-                                          ),
-                                          onTap: () {
-                                            setState(() {
-                                              showMoneyReport = !showMoneyReport;
-                                            });
-                                          },
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                            IgnorePointer(
+                              child: AnimatedContainer(
+                                duration: Duration(milliseconds: 1500),
+                                alignment: Alignment.center,
+                                color: loadComplete
+                                    ? Colors.transparent
+                                    : Colors.green,
+                                padding: const EdgeInsets.all(8.0),
                               ),
-                            ),
-                          )
-                        ],
+                            )
+                          ],
+                        ),
                       ),
                     ),
-                        chooser
-                  ]),
+                    topLayer,
+                    // bonuses and money
+                    bonusesAndMoney(),
+                    chooser ?? Container()
+                  ],
+                );}),
+      ),
+    );
+  }
+
+  Widget bonusesAndMoney() {
+
+    double h = min(MediaQuery.of(context).size.width * 0.15, MediaQuery.of(context).size.height * 0.1);
+
+    return Padding(padding: const EdgeInsets.only(top: 2, left: 2, right: 2),
+      child: SizedBox(
+        height: h,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisSize: MainAxisSize.max,
+          children: [
+            AnimatedList(
+              key: bonusListKey,
+              itemBuilder:
+                  (context, index, animation) =>
+                  SizedBox(
+                    width: h*2/3 + 8,
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                          horizontal: 4),
+                      child: bonuses[index],
+                    ),
+                  ),
+              initialItemCount: bonuses.length,
+              scrollDirection: Axis.horizontal,
+              shrinkWrap: true,
+            ),
+            moneyWidget(h/2)
+            ],
+        ),
+      ),
+    );
+
+  }
+
+  Widget moneyWidget(h) {
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          changeView();
+        });
+      },
+      child: Container(
+        alignment: Alignment.topCenter,
+        color: Colors.transparent,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Visibility(
+              visible: false,
+              child: Row(
+                children: [
+                  IconButton(icon: Icon(Icons.fiber_manual_record_sharp), onPressed: () async {
+                    int r = Random().nextInt(battlefield.map.length);
+                    topLayer.wallAttack(battlefield.map[r]);
+                  }),
+                  IconButton(icon: Icon(Icons.arrow_forward), onPressed: () async {
+                    battlefield.selectCells(2).then((value) {
+                      value.first.moveCellTo(cell: value.last).then((value) {
+                        print('move complete or failed');
+                      });
+                    });
+                  },),
+                  IconButton(icon: Icon(Icons.select_all), onPressed: () async {
+                    battlefield.selectCells(3).then((value) {
+                      print(value);
+                    });
+                  },),
+                  IconButton(icon: Icon(Icons.map), onPressed: () async {
+                    if (viewNumber == 0) {
+                      print('battlefield map: ${battlefield.w}x${battlefield.h} ${battlefield.map.length}');
+                      print(battlefield.map..sort(
+                          (a,b) => a.j.compareTo(b.j) + 1000* a.i.compareTo(b.i)
+                      ));
+                      print('selected: ${battlefield.selectedCells}');
+                    } else {
+                      print('town map: ${town.w}x${town.h} ${town.map.length}');
+                      print(town.map..sort(
+                              (a,b) => a.j.compareTo(b.j) + 1000* a.i.compareTo(b.i)
+                      ));
+                      print('selected: ${town.selectedCells}');
+                    }
+                  },),
+                  IconButton(icon: Icon(Icons.error), onPressed: () async {
+                    battlefield.battleBegin();
+                    game.changeView(i: 0);
+                  },),
+                  IconButton(icon: Icon(Icons.update), onPressed: () async {
+                    game.setState(() { });
+                    (town.key as GlobalKey).currentState.setState(() {});
+                  },),
                 ],
-              );
-            }),
-            IgnorePointer(
-              child: AnimatedContainer(
-                duration: Duration(milliseconds: 1500),
-                alignment: Alignment.center,
-                color: loadComplete ? Colors.transparent : Colors.green,
-                padding: const EdgeInsets.all(8.0),
+              ),
+            ),
+            Container(
+              // color: Colors.redAccent.withOpacity(0.3),
+              height: h,
+              child: !_coinAnimation.loaded() ? Icon(
+                  Icons.monetization_on
+              ) : Container(
+                width: h*2/3,
+                child: AnimationWidget(
+                  animation:
+                  _coinAnimation,
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.only(
+                  left: 8,
+                  right: 4),
+              child: Container(
+                height: h,
+                  child: FittedBox(
+                    fit: BoxFit.cover,
+                    child: Text(
+                      money.toString().padRight(6),
+                      style: TextStyle(
+                          color: Colors.white),
+                    ),
+                  )
               ),
             )
           ],
@@ -584,25 +433,48 @@ class _GameState extends State<Game> with TickerProviderStateMixin{
     super.setState(fn);
   }
 
-  void setSea({show}) {
-    showSea = show ?? !showSea;
-    showSeaDone = false;
-    if (showSea)
+  Future changeView({i, animate = true}) async {
+    viewNumber = i ?? ((viewNumber + 1) % 2);
+    print(viewNumber);
+    if (viewNumber == 0) {
+      chooserKey.currentState?.changeGamefield(battlefield);
+      // (battlefield.key as GlobalKey).currentState?.setState(() {});
+      if (animate)
+        return _mainScrollController.animateTo(0, duration: Duration(seconds: 1), curve: Curves.ease);
+      else {
+        _mainScrollController.jumpTo(0);
+        return Future.value();
+      }
+    } else if (viewNumber == 1) {
+      chooserKey.currentState?.changeGamefield(town);
+      // (town.key as GlobalKey).currentState?.setState(() {});
+      if (animate)
+        return _mainScrollController.animateTo(MediaQuery.of(context).size.width * 7/5, duration: Duration(seconds: 1), curve: Curves.ease);
+      else {
+        _mainScrollController.jumpTo(MediaQuery.of(context).size.width * 7/5);
+        return Future.value();
+      }
+    } else {
+      if (animate)
+        return _mainScrollController.animateTo(MediaQuery.of(context).size.width * (7/5+7/5), duration: Duration(seconds: 1), curve: Curves.ease);
+      else {
+        _mainScrollController.jumpTo(MediaQuery.of(context).size.width * (7/5+7/5));
+        return Future.value();
+      }
+    }
+   /* if (showSea) {
+      _mainScrollController.animateTo(0, duration: Duration(seconds: 1), curve: Curves.ease);
       seaAnimationController.forward();
-    else
+    } else {
+      _mainScrollController.animateTo(MediaQuery.of(context).size.height * 20/7 * 6/20, duration: Duration(seconds: 1), curve: Curves.ease);
       seaAnimationController.reverse();
+    }*/
   }
 
-  void step() async {
-    print('step');
-     game.happiness = 50.0;
-
-     setSea();
-
-    map.forEach((e) {
-      e.fill = 0;
-    });
-
+  Future step() async {
+    print('++++++ step');
+    game.happiness = 50.0;
+    setState(() { waitingForStep = true; });
     var bLen = bonuses.length;
     for (int i = 0; i < bonuses.length; i++) {
       bonuses[i].step();
@@ -611,596 +483,31 @@ class _GameState extends State<Game> with TickerProviderStateMixin{
         bLen = bonuses.length;
       }
     }
-    map.forEach((element) {
-      element.step();
-    });
-
-    game.chooserKey.currentState.step();
-    setState(() {
-      while (queue.length < 4) generateCard();
-    });
+    if (viewNumber == 0) {
+      await battlefield.step();
+      print('Battle queue: ${battlefield.queue}');
+    }
+    else {
+      await town.step();
+      print('Town queue: ${town.queue}');
+    }
+    await game.chooserKey.currentState.step();
     game.chooserKey.currentState.setAvailable(true);
     chooserKey.currentState.update();
-    selectedCells.clear();
 
-    setState(() {});
-  }
-
-  void setCell(GameCell cell, {i, j}) {
-    i = i == null ? cell.i : i;
-    j = j == null ? cell.j : j;
-    var candidate = map.where((element) => element.i == i && element.j == j);
-    if (candidate.isEmpty) {
-      map.add(cell
-        ..dragTarget = true
-        ..setCoordinates(i, j));
-      throw Exception('wtf1 setCell');
-    } else if (candidate.length == 1) {
-      map[map.indexOf(candidate.first)] = cell
-        ..dragTarget = true
-        ..setCoordinates(i, j);
-    } else {
-      throw Exception('wtf2 setCell');
-    }
-  }
-
-  void generateCard() {
-    int r = Random().nextInt(100);
-    if (r < 10)
-      queue.add(CellCard(cell: Castle()..freezeTimer = Random().nextInt(3)));
-    else if (r < 20)
-      queue.add(CellCard(cell: Farm()));
-    else if (r < 30)
-      queue.add(CellCard(cell: Knight()));
-    else if (r < 40)
-      queue.add(CellCard(cell: Sport()));
-    else if (r < 50)
-      queue.add(DiscountCard());
-    else if (r < -60)
-      queue.add(ResetRandomCardsCard());
-    else if (r < 70)
-      queue.add(SwapGameCellsCard(cardsQuan: Random().nextInt(2) + 2));
-    else if (r < 80)
-      queue.add(MoneyCard());
-    else if (r < 90)
-      queue.add(LoanCard());
-    else if (r < 100)
-      queue.add(TimerBlockerCard(
-        timer: Random().nextInt(2) + 2,
-        basePrice: (Random().nextInt(3) + 1) * 50,
-      ));
-    else
-      queue.add(ResetRandomCardsCard());
-  }
-}
-
-class GameCellLevel {
-  // for 1 pers/turn
-  int income;
-
-  // till turn
-  int rent;
-
-  // max pers
-  int capacity;
-
-  //cards to next lvl
-  int steps;
-
-  List<MapEntry<Type, int>> entertainments = [];
-
-  GameCellLevel(this.steps, this.rent, this.income, this.capacity,
-      {this.entertainments});
-
-  @override
-  String toString() {
-    return 'inc: $income, rent: $rent, cap: $capacity, steps: $steps';
-  }
-}
-
-class GameCell extends StatefulWidget {
-  @override
-  State createState() => _GameCellState();
-  var i = -1;
-  var j = -1;
-
-  List<GameCellLevel> levels = [
-    GameCellLevel(0, 0, 0, 0),
-  ];
-
-  var level = 0;
-  var price = 0;
-  var currentStep = 0;
-  int fill = 0;
-  var happiness = 0.0;
-  bool isLiving = false;
-  AssetImage image;
-  bool dragTarget = true;
-  bool draggable = false;
-  int freezeTimer = 0;
-  Offset offset = Offset(0, 0);
-  Offset movingTo = Offset(0, 0);
-  GlobalKey builderKey = GlobalKey();
-  var entertainments = [];
-
-  GameCell({this.i, this.j, this.dragTarget}) : super(key: GlobalKey()) {
-    i = i ?? -1;
-    j = j ?? -1;
-    dragTarget = dragTarget ?? true;
-    level = 0;
-    happiness = game.happiness;
-    image = null;
-  }
-
-  GameCell.from(GameCell c, {i, j}) : super(key: GlobalKey()) {
-    this.i = i ?? c.i;
-    this.j = j ?? c.j;
-    levels = []..addAll(c.levels);
-    image = c.image;
-    dragTarget = c.dragTarget;
-    freezeTimer = c.freezeTimer;
-    offset = c.offset;
-    movingTo = c.movingTo;
-  }
-
-  GameCell clone() {
-    return GameCell.from(this);
-  }
-
-  void step() {
-    if (freezeTimer > 0) {
-      freezeTimer--;
-      (key as GlobalKey).currentState.setState(() {});
-    } else {
-      game.money += (levels[level].income * fill) - levels[level].rent;
-    }
-  }
-
-  void calculateHappiness() {
-    happiness = game.happiness;
-  }
-
-  void calculateFill() {
-    fill = (levels[level].capacity * min(game.happiness / 100, 1)).round();
-  }
-
-  void fillEntertainment() {
-    var n = getNeighbors();
-    var ne = n.where(
-        (element) => !element.isLiving && element.runtimeType != GameCell);
-    var entertainments = game.map.where((e) => !e.isLiving);
-    var entClasses = entertainments.map((e) => e.runtimeType).toSet().toList();
-    var people = fill;
-    if (entClasses.contains(Restaurant)) {
-      for (var cell in n) {
-        if (cell is Restaurant) {
-          var filled = min(fill, cell.levels[cell.level].capacity - cell.fill);
-          people -= filled;
-          cell.fill += filled;
-          if (people == 0) break;
-        }
-      }
-    }
-    if (people > 0) {
-      happiness -= (5 * people / fill).round();
-      for (var cell in entertainments)
-        if (cell is Restaurant) {
-          var filled = min(fill, cell.levels[cell.level].capacity - cell.fill);
-          people -= filled;
-          cell.fill += filled;
-          if (people == 0) break;
-        }
-    }
-    if (people > 0) {
-      happiness -= (5 * people / fill).round();
-    }
-
-    var entertainmentCounter = 3;
-    var r = Random();
-
-    var hasFreeEntertainments = true;
-    people = fill;
-    while (entertainmentCounter > 0 && hasFreeEntertainments) {
-      if (people > 0) {
-        for (var e in ne)
-          if (e.levels[e.level].capacity - e.fill > 0) {
-            var chunk = r.nextInt(people + 1);
-            var filled = min(chunk, e.levels[e.level].capacity - e.fill);
-            people -= filled;
-            e.fill += filled;
-            if (people == 0) break;
-          }
-      }
-      if (people == 0) {
-        people = fill;
-        entertainmentCounter--;
-        continue;
-      } else {
-        happiness -= (5 * (people / fill).round());
-      }
-
-      while (people > 0 && hasFreeEntertainments) {
-        hasFreeEntertainments = false;
-        for (var e in entertainments)
-          if (e.levels[e.level].capacity - e.fill > 0) {
-            hasFreeEntertainments = true;
-            var chunk = r.nextInt(people + 1);
-            var filled = min(chunk, e.levels[e.level].capacity - e.fill);
-            people -= filled;
-
-            e.fill += filled;
-            if (people == 0) break;
-          }
-      }
-      if (people == 0) {
-        people = fill;
-        entertainmentCounter--;
-      } else {
-        happiness -= (5 * (people / fill).round());
-      }
-    }
-  }
-
-  void setCoordinates(i, j) {
-    this.i = i;
-    this.j = j;
-    resetOffset();
-  }
-
-  void resetOffset() {
-    offset = mapOffset();
-    movingTo = offset;
-  }
-
-  Offset mapOffset() {
-    return Offset(cellWidth * j, cellWidth * i);
-  }
-
-  Widget informationData() {
-    return Container();
-  }
-
-  void upgrade() {
-    if (levels.isNotEmpty) {
-      if (levels[level].steps > 0) {
-        currentStep++;
-        if (currentStep == levels[level].steps) {
-          level++;
-          currentStep = 0;
-          upgradeComplete();
-        }
-      }
-    }
-  }
-
-  void upgradeComplete() {}
-
-  num happinessBonus() {
-    return 0;
-  }
-
-  List<GameCell> getNeighbors({eight = true, active = true}) {
-    List<GameCell> neighbors = [];
-    if (i > 0)
-      neighbors.add(game.map.firstWhere((e) => e.i == i - 1 && e.j == j));
-    if (i < game.h - 1)
-      neighbors.add(game.map.firstWhere((e) => e.i == i + 1 && e.j == j));
-    if (j > 0)
-      neighbors.add(game.map.firstWhere((e) => e.i == i && e.j == j - 1));
-    if (j < game.w - 1)
-      neighbors.add(game.map.firstWhere((e) => e.i == i && e.j == j + 1));
-    if (!eight) {
-      if (active) neighbors.removeWhere((element) => element.freezeTimer > 0);
-      return neighbors;
-    }
-    if (i > 0) {
-      if (j > 0)
-        neighbors.add(game.map.firstWhere((e) => e.i == i - 1 && e.j == j - 1));
-      if (j < game.w - 1)
-        neighbors.add(game.map.firstWhere((e) => e.i == i - 1 && e.j == j + 1));
-    }
-    if (i < game.h - 1) {
-      if (j > 0)
-        neighbors.add(game.map.firstWhere((e) => e.i == i + 1 && e.j == j - 1));
-      if (j < game.w - 1)
-        neighbors.add(game.map.firstWhere((e) => e.i == i + 1 && e.j == j + 1));
-    }
-    if (active) neighbors.removeWhere((element) => element.freezeTimer > 0);
-    return neighbors;
-  }
-}
-
-class _GameCellState extends State<GameCell> {
-  var cls = [Colors.green[400], Colors.amber, Colors.purpleAccent, Colors.pink];
-  bool draggable = false;
-
-  void tapped() {
-    game.setState(() {
-      if (game.selectedCells.contains(widget)) {
-        game.selectedCells.remove(widget);
-        widget.resetOffset();
-      } else {
-        game.selectedCells.add(widget);
-        if (widget.image != null)
-        widget.movingTo =
-            widget.offset + Offset(-cellWidth / 20, -cellWidth / 20);
-      }
-    });
-  }
-
-  bool willAcceptDrag(data) {
-    if (data is CellCard && widget.dragTarget) {
-      if (widget.runtimeType == data.cell.runtimeType)
-        return widget.level < widget.levels.length - 1;
-      return true;
-    }
-    return false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-
-    draggable = widget.draggable && !game.selectedCells.contains(widget);
-
-    return SizedBox(
-      child: SizedBox(
-        width: cellWidth,
-        height: cellWidth,
-        child: DragTarget<dynamic>(
-            onWillAccept: willAcceptDrag,
-            onAccept: (data) {
-              game.chooserKey.currentState.remove(data);
-              data.activate();
-              game.money -= data.price;
-              if (widget.runtimeType == data.cell.runtimeType &&
-                  (widget.level < widget.levels.length)) {
-                widget.freezeTimer += data.cell.freezeTimer;
-                widget.upgrade();
-                setState(() {});
-              } else {
-                game.setCell(data.cell, i: widget.i, j: widget.j);
-              }
-            },
-            builder: (context, candidateData, rejectedData) {
-              var cellBody = Container(
-//                    color: Colors.greenAccent[700],
-                  alignment: Alignment.center,
-                  padding: EdgeInsets.all(cellWidth * 0.025),
-                  child: Stack(children: [
-                    widget.image == null ?
-                    Container(
-                      width: cellWidth,
-                      height: cellWidth,
-                      color: Colors.black.withOpacity(0.1),
-                    ) : Container(
-                      color: Colors.black.withOpacity(0.1),
-                      child: Image(
-                          alignment: Alignment.center,
-                          fit: BoxFit.fill,
-                          image: widget.image,
-                          width: cellWidth,
-                          height: cellWidth),
-                    ),
-                    widget.levels.isNotEmpty
-                        ? Align(
-                      alignment: Alignment.bottomCenter,
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                            left: cellWidth / 20,
-                            right: cellWidth / 20,
-                            bottom: cellWidth / 50),
-                        child: Row(
-                          mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
-                          children: List.generate(
-                              widget.levels[widget.level].steps,
-                                  (index) => Container(
-                                width: (cellWidth * 0.8) /
-                                    widget.levels[widget.level]
-                                        .steps,
-                                height: cellWidth / 20,
-                                color: (index + 1 <=
-                                    widget.currentStep)
-                                    ? Colors.white
-                                    : Colors.white
-                                    .withOpacity(0.4),
-                              )),
-                        ),
-                      ),
-                    )
-                        : Container(),
-                    Visibility(
-                      visible: widget.freezeTimer > 0,
-                      child: Container(
-                          alignment: Alignment.center,
-                          color: Colors.grey.withOpacity(0.7),
-                          child: FittedBox(
-                            alignment: Alignment.center,
-                            fit: BoxFit.cover,
-                            child: Text(
-                              widget.freezeTimer.toString(),
-                              style: TextStyle(
-                                  color: Colors.white, fontSize: 140),
-                            ),
-                          )),
-                    ),
-                    Container(
-                        color: Colors.white
-                            .withOpacity(candidateData.isEmpty ? 0 : 0.5)),
-                  ]));
-              return GestureDetector(
-                  behavior: HitTestBehavior.deferToChild,
-                  onLongPress: () {
-                    showDialog(
-                      context: context,
-                      builder: (context) => information(),
-                    );
-                  },
-                  onTap: () {
-                    if (game.selecting)
-                      tapped();
-                    else
-                      showDialog(
-                        context: context,
-                        builder: (context) => information(),
-                      );
-                  },
-                  child: Draggable(
-                    maxSimultaneousDrags: draggable ? 1 : 0,
-                    feedback: Container(
-                      child: cellBody,
-                    ),
-                    childWhenDragging: Container(
-                      width: cellWidth,
-                      height: cellWidth,
-                    ),
-                    onDragStarted: () {
-                      setState(() {
-                      });
-                    },
-                    onDragCompleted: () {},
-                    onDragEnd: (drag) {},
-                    data: widget,
-                    child: cellBody,
-                  ));
-            }),
-      ),
-    );
-  }
-
-  Widget information1() {
-    return StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        backgroundColor: Colors.lightBlue,
-        contentPadding: EdgeInsets.only(top: 8),
-        content: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(
-                    top: 12.0, left: 24.0, right: 24.0, bottom: 12.0),
-                child: RichText(
-                    textAlign: TextAlign.center,
-                    text: TextSpan(
-                        text: "lvl = ${widget.levels[widget.level]}"
-                            "\nhap = ${widget.happiness}\n"
-                            "fill = ${widget.fill}")),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(top: 12.0),
-                child: InkWell(
-                  onTap: () {
-                    Navigator.of(context, rootNavigator: true).pop();
-                  },
-                  child: Container(
-                      padding: EdgeInsets.only(top: 32.0, bottom: 32.0),
-                      decoration: BoxDecoration(
-                        color: Colors.lightBlue[400],
-                        borderRadius: BorderRadius.only(
-                            bottomLeft: Radius.circular(16.0),
-                            bottomRight: Radius.circular(16.0)),
-                      ),
-//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
-                      child: Icon(Icons.check_circle)),
-                ),
-              ),
-            ]),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      ),
-    );
-  }
-
-
-  @override
-  Widget information() {
-    return StatefulBuilder(
-      builder: (context, setState) {
-        return AlertDialog(
-          elevation: 0,
-          backgroundColor: Colors.transparent,
-          contentPadding: EdgeInsets.only(top: 8),
-          content: LimitedBox(
-            maxWidth: MediaQuery.of(context).size.width / 1.5,
-            child: Material(
-              elevation: 20,
-              color: Colors.transparent,
-              child: ClipRRect(
-                borderRadius: BorderRadius.all(Radius.circular(16)),
-                child: Container(
-                  color: Colors.greenAccent[400],
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Column(
-                            mainAxisAlignment: MainAxisAlignment.start,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              AspectRatio(
-                                aspectRatio: 1,
-                                child: ClipRRect(
-                                  clipBehavior: Clip.antiAlias,
-                                  child: Align(
-                                    alignment: Alignment.center,
-                                    child: LimitedBox(
-                                        maxHeight: 300,
-                                        maxWidth: 300,
-                                        child: widget.informationData()),
-                                  ),
-                                ),
-                              ),
-                              AspectRatio(
-                                aspectRatio: 1 / 0.5,
-                                child: ClipRRect(
-                                  clipBehavior: Clip.antiAlias,
-                                  child: Padding(
-                                    padding: const EdgeInsets.only(top: 12.0),
-                                    child: InkWell(
-                                      onTap: () {
-                                        Navigator.of(context,
-                                            rootNavigator: true)
-                                            .pop();
-                                      },
-                                      child: Container(
-                                          padding: EdgeInsets.only(
-                                              top: 32.0, bottom: 32.0),
-                                          decoration: BoxDecoration(
-                                            color: Colors.greenAccent[700],
-                                            borderRadius: BorderRadius.only(
-                                                bottomLeft:
-                                                Radius.circular(16.0),
-                                                bottomRight:
-                                                Radius.circular(16.0)),
-                                          ),
-//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
-                                          child: Icon(Icons.check_circle)),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ]),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-
+    setState(() { waitingForStep = false; });
+    print('------ step end');
   }
 }
 
 class Chooser extends StatefulWidget {
+
+  Gamefield gamefield;
+
   @override
   State createState() => _ChooserState();
 
-  Chooser({key}) : super(key: key);
+  Chooser(this.gamefield, {key}) : super(key: key);
 }
 
 class _ChooserState extends State<Chooser> {
@@ -1239,9 +546,27 @@ class _ChooserState extends State<Chooser> {
 //    await Future.delayed(Duration(milliseconds: 200));
   }
 
-  update() {
-    while (data.length < 4 && game.queue.isNotEmpty) this._addAnItem();
+  void update() {
+    while (data.length < 4) {
+      if (widget.gamefield.queue.isEmpty) {
+        widget.gamefield.generateCard();
+      }
+      this._addAnItem();
+    }
     setState(() {});
+  }
+
+  void changeGamefield(Gamefield gamefield) {
+    data.reversed.forEach((element) {
+      widget.gamefield.queue.insert(0, element);
+    });
+    while (data.isNotEmpty) {
+      removeNice(data.first,
+          begin: const Offset(0.0, 2.0),
+          end: const Offset(0.0, 0.0));
+    }
+    widget.gamefield = gamefield;
+    update();
   }
 
   @override
@@ -1252,48 +577,50 @@ class _ChooserState extends State<Chooser> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-        height: cellWidth * 1.7,
-        alignment: Alignment.center,
-        padding: EdgeInsets.all(cellWidth / 11),
-        decoration: BoxDecoration(
-            borderRadius: BorderRadius.all(Radius.circular(cellWidth / 6)),
-          color: Colors.white.withOpacity(0.1)
-        ),
-        child: SizedBox(
-            width: cellWidth * 1.2 * 4 + cellWidth / 2,
-            child: Stack(
-              fit: StackFit.expand,
-              overflow: Overflow.visible,
-              alignment: Alignment.center,
-              children: [
-                AnimatedSwitcher(
-                  duration: Duration(milliseconds: 300),
-                  child: message == null ? Container() : message,
-                ),
-                AnimatedPositioned(
-                  top: message == null ? 0 : cellWidth * 1.5,
-                  duration: Duration(milliseconds: 300),
-                  child: AbsorbPointer(
-                    absorbing: !available,
-                    child: SizedBox(
-                      height: cellWidth * 1.4,
-                      width: cellWidth * 1.2 * 4 + cellWidth / 2,
-                      child: AnimatedList(
-                        physics: NeverScrollableScrollPhysics(),
-                        scrollDirection: Axis.horizontal,
-                        padding:
-                            EdgeInsets.symmetric(horizontal: cellWidth / 4),
-                        key: _listKey,
-                        initialItemCount: data.length,
-                        itemBuilder: (context, index, animation) =>
-                            _buildItem(context, data[index], animation),
+    return AnimatedContainer(
+      height: cellWidth * 1.7,
+      alignment: Alignment.center,
+      duration: Duration(milliseconds: 500),
+      child: Container(
+          padding: EdgeInsets.all(cellWidth / 11),
+          decoration: BoxDecoration(
+              borderRadius: BorderRadius.all(Radius.circular(cellWidth / 6)),
+              color: Colors.white.withOpacity(0.1)),
+          child: SizedBox(
+              width: cellWidth * 1.2 * 4 + cellWidth / 2,
+              child: Stack(
+                fit: StackFit.expand,
+                overflow: Overflow.visible,
+                alignment: Alignment.center,
+                children: [
+                  AnimatedSwitcher(
+                    duration: Duration(milliseconds: 300),
+                    child: message == null ? Container() : message,
+                  ),
+                  AnimatedPositioned(
+                    top: message == null ? 0 : cellWidth * 1.5,
+                    duration: Duration(milliseconds: 300),
+                    child: AbsorbPointer(
+                      absorbing: !available,
+                      child: SizedBox(
+                        height: cellWidth * 1.4,
+                        width: cellWidth * 1.2 * 4 + cellWidth / 2,
+                        child: AnimatedList(
+                          physics: NeverScrollableScrollPhysics(),
+                          scrollDirection: Axis.horizontal,
+                          padding:
+                              EdgeInsets.symmetric(horizontal: cellWidth / 4),
+                          key: _listKey,
+                          initialItemCount: data.length,
+                          itemBuilder: (context, index, animation) =>
+                              _buildItem(context, data[index], animation),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            )));
+                ],
+              ))),
+    );
   }
 
   Widget _buildItem(
@@ -1314,17 +641,19 @@ class _ChooserState extends State<Chooser> {
             ),
             childWhenDragging: Container(
                 child: Container(
-                  width: cellWidth * 0.9,
-                  height: cellWidth,
-                )),
+              width: cellWidth * 0.9,
+              height: cellWidth,
+            )),
             onDragStarted: () {
               game.setState(() {
-                game.dragItem = item;
+                (widget.gamefield.key as GlobalKey).currentState.setState(() {});
+                widget.gamefield.dragItem = item;
               });
             },
             onDragCompleted: () {},
             onDragEnd: (drag) {
-              game.dragItem = null;
+              widget.gamefield.dragItem = null;
+              (widget.gamefield.key as GlobalKey).currentState.setState(() {});
               game.setState(() {});
             },
             child: Stack(
@@ -1374,8 +703,8 @@ class _ChooserState extends State<Chooser> {
   }
 
   void _addAnItem() {
-    data.add(game.queue.first);
-    game.queue.removeAt(0);
+    data.add(widget.gamefield.queue.first);
+    widget.gamefield.queue.removeAt(0);
     _listKey.currentState.insertItem(data.length - 1);
   }
 
@@ -1384,6 +713,7 @@ class _ChooserState extends State<Chooser> {
     _listKey.currentState.insertItem(position);
   }
 }
+
 /*
 
 class EnemiesContainer extends StatefulWidget {
@@ -1407,7 +737,7 @@ class _EnemiesContainerState extends State<EnemiesContainer> with SingleTickerPr
   var left = 0.0;
   bool available = true;
   Widget message;
-  var currCellWidth;
+  var cellWidth;
 
   Future<bool> loaded() {
     Future<bool> check() async {
@@ -1451,13 +781,13 @@ class _EnemiesContainerState extends State<EnemiesContainer> with SingleTickerPr
   }
 
   Widget space() {
-    return Container(width: currCellWidth);
+    return Container(width: cellWidth);
   }
 
   @override
   Widget build(BuildContext context) {
 
-    currCellWidth = cellWidth * (game.w - 0.5) / 3;
+    cellWidth = cellWidth * (game.w - 0.5) / 3;
 
     return LayoutBuilder(builder: (context, constraints) {
       return Container(
@@ -1489,7 +819,7 @@ class _EnemiesContainerState extends State<EnemiesContainer> with SingleTickerPr
             return Align(
               alignment: index == 0 ? Alignment.centerLeft : index == 1 ? Alignment.center : Alignment.centerRight,
               child: SizedBox(
-                width: currCellWidth,
+                width: cellWidth,
                 child: Stack(
                   overflow: Overflow.visible,
                   children: [
@@ -1510,7 +840,7 @@ class _EnemiesContainerState extends State<EnemiesContainer> with SingleTickerPr
           builder: (context, value, child) => Align(
             alignment: index == 0 ? Alignment.centerLeft : index == 1 ? Alignment.center : Alignment.centerRight,
             child: SizedBox(
-              width: currCellWidth,
+              width: cellWidth,
               child: Stack(
                 overflow: Overflow.visible,
                 children: [
@@ -1565,7 +895,7 @@ class _EnemiesContainerState extends State<EnemiesContainer> with SingleTickerPr
                 Align(
               alignment: index == 0 ? Alignment.centerLeft : index == 1 ? Alignment.center : Alignment.centerRight,
               child: SizedBox(
-                width: currCellWidth,
+                width: cellWidth,
                 child: Stack(
                   overflow: Overflow.visible,
                   children: [
@@ -1623,109 +953,28 @@ class CellCard extends GameCard {
 
   CellCard({this.cell}) {
     this.price = cell.price;
-    if (cell == null)
-      cell = GameCell(dragTarget: false);
-    else
-      cell.dragTarget = false;
+    this.cell ??= GameCell();
+
   }
+
 
   @override
   State createState() => _CellCardState();
 
   @override
   void activate() {
-    game.step();
+    cell.placed();
   }
 
   @override
   Widget information(tag1) {
     var tag = (tag1 as _CellCardState);
-    return StatefulBuilder(
-      builder: (context, setState) {
-        return AlertDialog(
-          elevation: 0,
-          backgroundColor: Colors.transparent,
-          contentPadding: EdgeInsets.only(top: 8),
-          content: Hero(
-            tag: tag,
-            child: LimitedBox(
-              maxWidth: MediaQuery.of(context).size.width / 1.5,
-              child: Material(
-                elevation: 20,
-                color: Colors.transparent,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.all(Radius.circular(16)),
-                  child: Container(
-                    color: Colors.greenAccent[400],
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Column(
-                              mainAxisAlignment: MainAxisAlignment.start,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                AspectRatio(
-                                  aspectRatio: 1,
-                                  child: ClipRRect(
-                                    clipBehavior: Clip.antiAlias,
-                                    child: Align(
-                                      alignment: Alignment.center,
-                                      child: LimitedBox(
-                                          maxHeight: 300,
-                                          maxWidth: 300,
-                                          child: tag.widget.cell),
-                                    ),
-                                  ),
-                                ),
-                                AspectRatio(
-                                  aspectRatio: 1 / 0.5,
-                                  child: ClipRRect(
-                                    clipBehavior: Clip.antiAlias,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(top: 12.0),
-                                      child: InkWell(
-                                        onTap: () {
-                                          Navigator.of(context,
-                                                  rootNavigator: true)
-                                              .pop();
-                                        },
-                                        child: Container(
-                                            padding: EdgeInsets.only(
-                                                top: 32.0, bottom: 32.0),
-                                            decoration: BoxDecoration(
-                                              color: Colors.greenAccent[700],
-                                              borderRadius: BorderRadius.only(
-                                                  bottomLeft:
-                                                      Radius.circular(16.0),
-                                                  bottomRight:
-                                                      Radius.circular(16.0)),
-                                            ),
-//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
-                                            child: Icon(Icons.check_circle)),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ]),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-
+    Widget infoData = tag.widget.cell.informationData();
+    return infoData == null ? null : game.information(infoData, tag: tag);
   }
 
   @override
   void step() {
-    // TODO: implement step
   }
 }
 
@@ -1736,57 +985,65 @@ class _CellCardState extends State<CellCard> {
   Widget build(BuildContext context) {
     return Hero(
       tag: this,
-      child: SizedBox(
-        width: cellWidth,
-        height: cellWidth * 1.4,
-        child: GestureDetector(
-          onTap: () {
-            Navigator.of(context).push(
-              new PageRouteBuilder(
-                opaque: false,
-                transitionDuration: Duration(milliseconds: 1000),
-                fullscreenDialog: true,
-                barrierDismissible: true,
-                pageBuilder: (context, animation, secondaryAnimation) {
-                  return widget.information(this);
-                },
-              ),
-            );
-          },
-          child: AbsorbPointer(
-            child: Material(
-              elevation: cellWidth / 25,
-              color: Colors.transparent,
-              child: ClipRRect(
-                borderRadius: BorderRadius.all(Radius.circular(cellWidth / 11)),
-                child: Container(
-                  color: Colors.greenAccent[700],
-                  child: Column(
-                    children: [
-                      SizedBox(height: cellWidth, child: widget.cell),
-                      SizedBox(
-                        height: cellWidth * 0.4,
-                        child: FittedBox(
-                          fit: BoxFit.fitWidth,
-                          child: Container(
-                            alignment: Alignment.center,
-                            child: Padding(
-                              padding: EdgeInsets.all(cellWidth / 16),
-                              child: Text(
-                                widget.price.toString(),
-                                style: TextStyle(
-                                    fontSize: cellWidth, color: Colors.white),
+      child: GestureDetector(
+        onTap: () {
+          Widget info = widget.information(this);
+          if (info != null) {
+          Navigator.of(context).push(
+            new PageRouteBuilder(
+              opaque: false,
+              transitionDuration: Duration(milliseconds: 300),
+              fullscreenDialog: true,
+              barrierDismissible: true,
+              pageBuilder: (context, animation, secondaryAnimation) {
+                return info;
+              },
+            ),
+          );}
+        },
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            var cellWidth = min(constraints.maxWidth, constraints.maxHeight / 1.4);
+            if (cellWidth.isInfinite) cellWidth = MediaQuery.of(context).size.width / 5 / 1.1;
+            return SizedBox(
+              width: cellWidth,
+              height: cellWidth * 1.4,
+              child: AbsorbPointer(
+                child: Material(
+                  elevation: cellWidth / 25,
+                  color: Colors.transparent,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.all(Radius.circular(cellWidth / 11)),
+                    child: Container(
+                      color: Colors.greenAccent[700],
+                      child: Column(
+                        children: [
+                          SizedBox(height: cellWidth, child: widget.cell),
+                          SizedBox(
+                            height: cellWidth * 0.4,
+                            child: FittedBox(
+                              fit: BoxFit.fitWidth,
+                              child: Container(
+                                alignment: Alignment.center,
+                                child: Padding(
+                                  padding: EdgeInsets.all(cellWidth / 16),
+                                  child: Text(
+                                    widget.price.toString(),
+                                    style: TextStyle(
+                                        fontSize: cellWidth, color: Colors.white),
+                                  ),
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      )
-                    ],
+                          )
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          }
         ),
       ),
     );
@@ -1795,8 +1052,11 @@ class _CellCardState extends State<CellCard> {
 
 class EventCard extends GameCard {
   Widget child;
+  Gamefield gamefield;
 
-  EventCard({this.child}) : super(key: GlobalKey());
+  EventCard({@required this.gamefield, this.child}) : super(key: GlobalKey()) {
+    assert(this.gamefield != null);
+  }
 
   @override
   State createState() => _EventCardState();
@@ -1817,8 +1077,8 @@ class EventCard extends GameCard {
           contentPadding: EdgeInsets.only(top: 8),
           content: Hero(
             tag: tag,
-            child: LimitedBox(
-              maxWidth: MediaQuery.of(context).size.width / 1.5,
+            child: SizedBox(
+              width: MediaQuery.of(context).size.width / 1.5,
               child: Material(
                 elevation: 20,
                 color: Colors.transparent,
@@ -1827,57 +1087,50 @@ class EventCard extends GameCard {
                   child: Container(
                     color: Colors.redAccent,
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Column(
-                              mainAxisAlignment: MainAxisAlignment.start,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                AspectRatio(
-                                  aspectRatio: 1,
-                                  child: ClipRRect(
-                                    clipBehavior: Clip.antiAlias,
-                                    child: LimitedBox(
-                                        maxHeight: 300,
-                                        maxWidth: 300,
-                                        child: tag.widget.child),
-                                  ),
-                                ),
-                                AspectRatio(
-                                  aspectRatio: 1 / 0.5,
-                                  child: ClipRRect(
-                                    clipBehavior: Clip.antiAlias,
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(top: 12.0),
-                                      child: InkWell(
-                                        onTap: () {
-                                          Navigator.of(context,
-                                                  rootNavigator: true)
-                                              .pop();
-                                        },
-                                        child: Container(
-                                            padding: EdgeInsets.only(
-                                                top: 32.0, bottom: 32.0),
-                                            decoration: BoxDecoration(
-                                              color: Colors.redAccent[400],
-                                              borderRadius: BorderRadius.only(
-                                                  bottomLeft:
-                                                      Radius.circular(16.0),
-                                                  bottomRight:
-                                                      Radius.circular(16.0)),
-                                            ),
-//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
-                                            child: Icon(Icons.check_circle)),
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AspectRatio(
+                            aspectRatio: 1,
+                            child: ClipRRect(
+                              clipBehavior: Clip.antiAlias,
+                              child: LimitedBox(
+                                  maxHeight: 300,
+                                  maxWidth: 300,
+                                  child: tag.widget.child),
+                            ),
+                          ),
+                          AspectRatio(
+                            aspectRatio: 1 / 0.5,
+                            child: ClipRRect(
+                              clipBehavior: Clip.antiAlias,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 12.0),
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.of(context,
+                                            rootNavigator: true)
+                                        .pop();
+                                  },
+                                  child: Container(
+                                      padding: EdgeInsets.only(
+                                          top: 32.0, bottom: 32.0),
+                                      decoration: BoxDecoration(
+                                        color: Colors.redAccent[400],
+                                        borderRadius: BorderRadius.only(
+                                            bottomLeft:
+                                                Radius.circular(16.0),
+                                            bottomRight:
+                                                Radius.circular(16.0)),
                                       ),
-                                    ),
-                                  ),
+//                              child: Icon(Icons.check_circle_outline, color: Colors.amberAccent, size: 56,),
+                                      child: Icon(Icons.check_circle)),
                                 ),
-                              ]),
-                        ),
-                      ],
-                    ),
+                              ),
+                            ),
+                          ),
+                        ]),
                   ),
                 ),
               ),
@@ -1901,40 +1154,42 @@ class _EventCardState extends State<EventCard> {
       tag: this,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          var currCellWidth =
-              min(constraints.maxWidth, constraints.maxHeight / 1.4);
-          if (currCellWidth.isInfinite) currCellWidth = cellWidth;
+          var cellWidth = min(constraints.maxWidth, constraints.maxHeight / 1.4);
+          if (cellWidth.isInfinite) cellWidth = MediaQuery.of(context).size.width / 5 / 1.1;
           return SizedBox(
-            width: currCellWidth,
-            height: currCellWidth * 1.4,
+            width: cellWidth,
+            height: cellWidth * 1.4,
             child: GestureDetector(
               behavior: HitTestBehavior.deferToChild,
               onTap: () {
+                Widget info = widget.information(this);
+                if (info != null) {
                 Navigator.of(context).push(
                   new PageRouteBuilder(
                     opaque: false,
-                    transitionDuration: Duration(milliseconds: 1000),
+                    transitionDuration: Duration(milliseconds: 500),
                     fullscreenDialog: true,
                     barrierDismissible: true,
                     pageBuilder: (context, animation, secondaryAnimation) {
-                      return widget.information(this);
+                      return info;
                     },
                   ),
                 );
+                }
               },
               child: Material(
-                elevation: currCellWidth / 25,
+                elevation: max(cellWidth / 25,1),
                 color: Colors.transparent,
                 child: ClipRRect(
                   borderRadius:
-                      BorderRadius.all(Radius.circular(currCellWidth / 11)),
+                      BorderRadius.all(Radius.circular(cellWidth / 11)),
                   child: Container(
                     height: cellWidth * 2,
                     color: Colors.redAccent[400],
                     child: Column(
                       children: [
                         SizedBox(
-                          height: currCellWidth,
+                          height: cellWidth,
                           child: Container(
                             alignment: Alignment.center,
                             color: Colors.redAccent,
@@ -1942,17 +1197,17 @@ class _EventCardState extends State<EventCard> {
                           ),
                         ),
                         SizedBox(
-                          height: currCellWidth * 0.4,
+                          height: cellWidth * 0.4,
                           child: Container(
                             alignment: Alignment.center,
                             child: FittedBox(
                               fit: BoxFit.fitWidth,
                               child: Padding(
-                                padding: EdgeInsets.all(currCellWidth / 16),
+                                padding: EdgeInsets.all(cellWidth / 16),
                                 child: Text(
                                   widget.price.toString(),
                                   style: TextStyle(
-                                      fontSize: currCellWidth,
+                                      fontSize: cellWidth,
                                       color: Colors.white),
                                 ),
                               ),
@@ -1971,3 +1226,4 @@ class _EventCardState extends State<EventCard> {
     );
   }
 }
+

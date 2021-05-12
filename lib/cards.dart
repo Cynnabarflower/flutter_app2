@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:firebase_admob/firebase_admob.dart';
@@ -7,6 +6,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app2/game.dart';
+
+import 'ads.dart';
 
 class ResetCardsCard extends EventCard {
   @override
@@ -17,13 +18,13 @@ class ResetCardsCard extends EventCard {
           begin: const Offset(0.0, 2.0),
           end: const Offset(0.0, 0.0));
     game.setState(() {});
-    game.generateCard();
-    game.generateCard();
-    game.generateCard();
+    // gamefield.generateCard();
+    // gamefield.generateCard();
+    // gamefield.generateCard();
     game.step();
   }
 
-  ResetCardsCard() {
+  ResetCardsCard({@required gamefield}) : super(gamefield: gamefield) {
     this.child = Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -32,9 +33,12 @@ class ResetCardsCard extends EventCard {
           Flexible(flex: 1, child: Icon(Icons.refresh, color: Colors.white)),
           Flexible(
               flex: 1,
-              child: Icon(
-                Icons.remove,
-                color: Colors.white,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: Icon(
+                  Icons.remove,
+                  color: Colors.white,
+                ),
               ))
         ]);
   }
@@ -59,13 +63,13 @@ class ResetRandomCardsCard extends EventCard {
         Duration(milliseconds: 200),
         () => game.setState(() {
               while (removeQuan-- > 0) {
-                game.generateCard();
+                // gamefield.generateCard();
               }
               game.step();
             }));
   }
 
-  ResetRandomCardsCard() {
+  ResetRandomCardsCard({@required gamefield}) : super(gamefield: gamefield)  {
     this.child = Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisAlignment: MainAxisAlignment.center,
@@ -74,9 +78,12 @@ class ResetRandomCardsCard extends EventCard {
           Flexible(flex: 1, child: Icon(Icons.refresh, color: Colors.white)),
           Flexible(
               flex: 2,
-              child: Text(
-                "?",
-                style: TextStyle(color: Colors.white),
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: Text(
+                  "?",
+                  style: TextStyle(color: Colors.white),
+                ),
               ))
         ]);
   }
@@ -87,76 +94,23 @@ class SwapGameCellsCard extends EventCard {
 
   @override
   Future activate() async {
-    game.selecting = true;
-    game.selectedCells = [];
-    game.chooserKey.currentState.setAvailable(false);
+    var selectedCells = await gamefield.selectCells(cardsQuan, showMessage: true);
+    selectedCells.shuffle();
+    var firstI = selectedCells.first.i;
+    var firstJ = selectedCells.first.j;
 
-    Future<bool> check2({i = 0}) async {
-      if (i > 1000) throw TimeoutException("SwapGameCellsCard activate");
-      if (game.selectedCells.every((e) => e.offset == e.movingTo)) return true;
-      return Future.delayed(Duration(milliseconds: 50), () => check2(i: ++i));
+    List<Future> futures = [];
+
+    for (int i = 0; i < selectedCells.length-1; i++) {
+      futures.add(selectedCells[i].moveCellTo(cell: selectedCells[i+1], createReplacement: false, deleteTarget: false));
     }
+    futures.add(selectedCells.last.moveCellTo(i: firstI, j: firstJ, createReplacement: false, deleteTarget: false));
 
-    Future<bool> check() async {
-      if (game.selectedCells.length >= cardsQuan) {
-        game.selecting = false;
-        return Future.delayed(Duration(milliseconds: 50), () => true);
-      }
-      return Future.delayed(Duration(milliseconds: 50), () => check());
-    }
-
-    game.chooserKey.currentState.showMessage(
-        FittedBox(
-      fit: BoxFit.fitWidth,
-      child: Text("Choose $cardsQuan cells to swap", style: TextStyle(
-        fontSize: 120,
-        color: Colors.white
-      ),),
-    ));
-
-    await check();
-
-    game.chooserKey.currentState.hideMessage();
-
-    game.selectedCells.forEach((e) {
-      e.builderKey = GlobalKey();
-      e.movingTo = e.offset;
-    });
-    game.setState(() {});
-
-    await check2();
-
-    void shuffle(List array) {
-      for (var i = array.length - 1; i > 0; i--) {
-        var j = Random().nextInt(i);
-        var x = array[i].i;
-        var y = array[i].j;
-        array[i]
-          ..i = array[j].i
-          ..j = array[j].j;
-        array[j]
-          ..i = x
-          ..j = y;
-      }
-    }
-
-    shuffle(game.selectedCells);
-
-    game.selectedCells.forEach((e) {
-      e.builderKey = GlobalKey();
-      e.movingTo = e.mapOffset();
-    });
-    game.setState(() {});
-
-    await check2();
-    game.selectedCells.forEach((e) {
-      game.setCell(e);
-    });
-    game.selectedCells.clear();
+    await Future.wait(futures);
     game.step();
   }
 
-  SwapGameCellsCard({this.cardsQuan = 2}) {
+  SwapGameCellsCard({@required gamefield, this.cardsQuan = 2}) : super(gamefield: gamefield)  {
     cardsQuan = cardsQuan ?? 2;
     this.child = Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -174,77 +128,52 @@ class SwapGameCellsCard extends EventCard {
                   ))),
           Flexible(
               flex: 1,
-              child: Text(
-                "Swap",
-                style: TextStyle(color: Colors.white),
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: Text(
+                  "Swap",
+                  style: TextStyle(color: Colors.white),
+                ),
               ))
         ]);
   }
 }
 
+
+//rewrite
 class SwapGameCellsRandomCard extends EventCard {
   int cardsQuan;
 
   @override
   Future activate() async {
-    game.selectedCells = [];
     game.chooserKey.currentState.setAvailable(false);
-
-    Future<bool> check2({i = 0}) async {
-      if (i > 20) throw TimeoutException("SwapGameCellsCard activate");
-      if (game.selectedCells.every((e) => e.offset == e.movingTo)) return true;
-      return Future.delayed(Duration(milliseconds: 50), () => check2(i: ++i));
-    }
 
     var cells = Set();
     while (cells.length < cardsQuan) {
       var a = Random().nextInt(45);
       if (!cells.contains(a)) {
         cells.add(a);
-        (game.map[a] as dynamic).key.currentState.tapped();
         await Future.delayed(Duration(milliseconds: cardsQuan * 80));
       }
     }
 
-    game.selectedCells.forEach((e) {
-      e.builderKey = GlobalKey();
-      e.movingTo = e.offset;
-    });
-    game.setState(() {});
+    var selectedCells = cells.toList()..shuffle();
 
-    await check2();
+    var firstI = selectedCells.first.i;
+    var firstJ = selectedCells.first.j;
 
-    void shuffle(List array) {
-      for (var i = array.length - 1; i > 0; i--) {
-        var j = Random().nextInt(i);
-        var x = array[i].i;
-        var y = array[i].j;
-        array[i]
-          ..i = array[j].i
-          ..j = array[j].j;
-        array[j]
-          ..i = x
-          ..j = y;
-      }
+    List<Future> futures = [];
+
+    for (int i = 0; i < selectedCells.length-1; i++) {
+      futures.add(selectedCells[i].moveCellTo(cell: selectedCells[i+1], createReplacement: false, deleteTarget: false));
     }
+    futures.add(selectedCells.last.moveCellTo(i: firstI, j: firstJ, createReplacement: false, deleteTarget: false));
 
-    shuffle(game.selectedCells);
-
-    game.selectedCells.forEach((e) {
-      e.builderKey = GlobalKey();
-      e.movingTo = e.mapOffset();
-    });
-    game.setState(() {});
-
-    await check2();
-    game.selectedCells.forEach((e) {
-      game.setCell(e);
-    });
-    game.selectedCells.clear();
+    await Future.wait(futures);
     game.step();
   }
 
-  SwapGameCellsRandomCard({this.cardsQuan = 2}) {
+  SwapGameCellsRandomCard({@required gamefield, this.cardsQuan = 2}) : super(gamefield: gamefield) {
     cardsQuan = cardsQuan ?? 2;
     this.child = Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -279,7 +208,7 @@ class TimerBlockerCard extends EventCard {
   @override
   void step() async {
     timer--;
-    var t = TimerBlockerCard(timer: timer, basePrice: basePrice,);
+    var t = TimerBlockerCard(timer: timer, basePrice: basePrice,gamefield: gamefield);
     game.chooserKey.currentState.setState(() {
       var i =  game.chooserKey.currentState.data.indexOf(this);
       game.chooserKey.currentState.data.removeAt(i);
@@ -287,7 +216,7 @@ class TimerBlockerCard extends EventCard {
     });
 
     if (timer <= 0) {
-      game.generateCard();
+      // gamefield.generateCard();
       game.chooserKey.currentState.removeNice(
           game.chooserKey.currentState
               .data[game.chooserKey.currentState.data.indexOf(t)],
@@ -305,7 +234,7 @@ class TimerBlockerCard extends EventCard {
     }
   }
 
-  TimerBlockerCard({this.timer = 2, this.basePrice = 100}) {
+  TimerBlockerCard({this.timer = 2, this.basePrice = 100, @required gamefield}) : super(gamefield: gamefield) {
     this.price = basePrice * timer;
     this.child = Column(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -322,9 +251,12 @@ class TimerBlockerCard extends EventCard {
                   ))),
           Flexible(
               flex: 1,
-              child: Text(
-                "Blocker",
-                style: TextStyle(color: Colors.white),
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: Text(
+                  "Blocker",
+                  style: TextStyle(color: Colors.white),
+                ),
               ))
         ]);
   }
@@ -339,7 +271,7 @@ class MoneyCard extends EventCard {
     game.step();
   }
 
-  MoneyCard({this.money}) {
+  MoneyCard({this.money, @required gamefield}) : super(gamefield: gamefield) {
     this.price = 0;
     this.money = this.money ?? (Random().nextInt(4) + 1) * 100;
     this.child = Column(
@@ -383,7 +315,6 @@ class LoanCard extends EventCard {
     game.step();
   }
 
-
   @override
   void step() {
     if (activated) {
@@ -405,7 +336,7 @@ class LoanCard extends EventCard {
     }
   }
 
-  LoanCard({this.money, this.interestPerStep, this.steps}) {
+  LoanCard({this.money, this.interestPerStep, this.steps, @required gamefield}) : super(gamefield: gamefield) {
     this.price = 0;
     this.money = this.money ?? (Random().nextInt(4) + 1) * 100;
     this.interestPercent  = Random().nextInt(8) + 10;
@@ -603,10 +534,9 @@ class AdMoneyCard extends EventCard {
           )).then((value) {
             adLoading = false;
             game.step();});
-
   }
 
-  AdMoneyCard({this.money}) {
+  AdMoneyCard({this.money, @required gamefield}) : super(gamefield: gamefield) {
     this.price = 0;
     this.money = this.money ?? (Random().nextInt(3) + 1) * 500;
     this.child = Column(
@@ -683,7 +613,7 @@ class DiscountCard extends EventCard {
     }
   }
 
-  DiscountCard({this.discountPercent}) {
+  DiscountCard({this.discountPercent, @required gamefield}) : super(gamefield: gamefield) {
     this.price = 0;
     this.discountPercent = this.discountPercent ?? (Random().nextInt(4) + 2) * 10;
     this.child = Column(

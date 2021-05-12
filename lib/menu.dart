@@ -1,11 +1,11 @@
 import 'dart:ui';
 
-import 'package:firebase_admob/firebase_admob.dart';
-import 'package:flame/flame.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app2/game.dart';
+
+import 'ads.dart';
 
 class Menu extends StatefulWidget {
   @override
@@ -15,7 +15,7 @@ class Menu extends StatefulWidget {
 class _MenuState extends State<Menu> {
   var duration = Duration(milliseconds: 600);
   bool inMenu = true;
-  var game;
+  // var game;
   var sigma = 4.0;
 
 
@@ -28,7 +28,7 @@ class _MenuState extends State<Menu> {
     ]);
 
 
-   game = Game();
+   // game = Game();
 
     Future.delayed(Duration(seconds: 1), () {
 
@@ -80,7 +80,7 @@ class _MenuState extends State<Menu> {
       child: Scaffold(
           body: Stack(
         children: [
-          game,
+          // game,
           Center(
             child: AnimatedSwitcher(
               child: inMenu ? Stack(
@@ -103,6 +103,7 @@ class _MenuState extends State<Menu> {
                               children: [
                                 MaterialButton(
                                   onPressed: () => setState(() {
+                                    Navigator.of(context).push(MaterialPageRoute(builder: (context) => Game.load()));
                                     inMenu = false;
                                   }),
                                   color: Colors.greenAccent[400],
@@ -173,7 +174,8 @@ class _MenuState extends State<Menu> {
                                         child: MaterialButton(
                                           onPressed: () {
                                             setState(() {
-                                              game = Game();
+                                              Navigator.of(context).push(MaterialPageRoute(builder: (context) => Game()));
+                                              // game = Game();
                                               inMenu = false;
                                             });
                                           },
